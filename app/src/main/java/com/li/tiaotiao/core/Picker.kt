@@ -131,21 +131,21 @@ class Picker(private val svc: SkipService) {
         container.setBackgroundColor(0x4D000000)
 
         val tip = TextView(ctx).apply {
-            text = "轻点要自动跳过的按钮\n（点下方按钮取消）"
+            text = "轻点要自动跳过的按钮"
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
-            setPadding(dp(16), dp(80), dp(16), 0)
+            setPadding(dp(16), 0, dp(16), dp(8))
         }
-        container.addView(
-            tip,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP
-            )
+        // 放到屏幕下方：开屏广告的「跳过」几乎都在右上角，提示文字压在上面会挡住你点
+        val tipLp = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         )
+        tipLp.bottomMargin = dp(150)
+        container.addView(tip, tipLp)
 
         val cancel = Button(ctx).apply {
             text = "取消"
@@ -200,9 +200,18 @@ class Picker(private val svc: SkipService) {
         done = true
         removeBubble()
         removeMask()
-        if (rule != null) toast("已生成规则：${rule.name}")
+        if (rule != null) {
+            val pkg = rule.packages.firstOrNull()
+            val who = if (pkg == null) "所有应用" else labelOf(pkg)
+            toast("已生成规则「${rule.name}」\n生效于 $who")
+        }
         onDone(rule)
     }
+
+    private fun labelOf(pkg: String): String = runCatching {
+        val pm = svc.packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+    }.getOrDefault(pkg)
 
     /** 找出点击位置下「最深、最小」的节点，通常就是那个按钮本身 */
     private fun hitTest(x: Float, y: Float): Rule? {
@@ -237,24 +246,46 @@ class Picker(private val svc: SkipService) {
         }
 
         val rule = Rule(name = "拾取 · $label")
-        if (svc.pkg.isNotEmpty()) rule.packages = mutableListOf(svc.pkg)
+
+        // 关键：包名取「这个节点所属的 App」，而不是 svc.pkg。
+        // 拾取时服务是暂停状态，pkg 很可能还停在「Li 跳过」自己身上，
+        // 那样生成的规则只会对自己生效，下次开屏当然不会动。
+        val nodePkg = runCatching { node.packageName?.toString() }.getOrNull()
+        val targetPkg = when {
+            !nodePkg.isNullOrBlank() -> nodePkg
+            svc.pkg.isNotBlank() -> svc.pkg
+            else -> ""
+        }
+        if (targetPkg.isNotBlank() && targetPkg != svc.packageName) {
+            rule.packages = mutableListOf(targetPkg)
+        }
+
+        // 区域往外扩一点，避免下次字体宽度、倒计时位数变化导致「有一点点出界」就判负
+        val padX = sw * 0.02f
+        val padY = sh * 0.02f
         rule.region = Region(
-            b.left / sw.toFloat(),
-            b.top / sh.toFloat(),
-            b.right / sw.toFloat(),
-            b.bottom / sh.toFloat()
+            ((b.left - padX) / sw).coerceIn(0f, 1f),
+            ((b.top - padY) / sh).coerceIn(0f, 1f),
+            ((b.right + padX) / sw).coerceIn(0f, 1f),
+            ((b.bottom + padY) / sh).coerceIn(0f, 1f)
         )
+        // 文案里带倒计时（「跳过 5」「3s」）时，必须把数字部分剥掉，
+        // 否则下次数字一变就匹配不上 —— 这是「当时能用、下次失效」的另一个原因
+        val baseText = stripCountdown(text)
         when {
-            text.isNotEmpty() -> rule.keywords = mutableListOf(text)
+            baseText.isNotEmpty() -> rule.keywords = mutableListOf(baseText)
+            text.isNotEmpty() -> rule.textRegex = digitRegex(text)
             vid.isNotEmpty() -> rule.viewIdRegex = Regex.escape(vid)
             desc.isNotEmpty() -> rule.descRegex = Regex.escape(desc)
             else -> rule.allowPositional = true
         }
         rule.maxWidthFrac = (b.width().toFloat() / sw * 1.5f).coerceIn(0.15f, 0.95f)
         rule.maxHeightFrac = (b.height().toFloat() / sh * 1.5f).coerceIn(0.06f, 0.95f)
+        // 拾取到的节点可能只是文字，真正响应点击的是整页触摸 —— 不强制要求可点击，靠区域锁死误触
+        rule.mustClickable = false
         rule.minScore = 80
         rule.cooldownMs = 1200
-        rule.note = "拾取于 ${svc.pkg} / ${svc.activityName}".trim()
+        rule.note = "拾取于 $targetPkg / ${svc.activityName}".trim()
         return rule
     }
 
@@ -269,7 +300,11 @@ class Picker(private val svc: SkipService) {
         val b = Rect()
         n.getBoundsInScreen(b)
         if (!b.contains(x.toInt(), y.toInt())) return
-        if (n.isVisibleToUser) out.add(n to depth)
+        // 跳过拾取器自己的遮罩节点，否则会抓到提示文字，生成一条对自己生效的废规则
+        val p = runCatching { n.packageName?.toString() }.getOrNull()
+        if (p == null || p != svc.packageName) {
+            if (n.isVisibleToUser) out.add(n to depth)
+        }
         for (i in 0 until n.childCount) walk(n.getChild(i), depth + 1, x, y, out)
     }
 
@@ -277,6 +312,34 @@ class Picker(private val svc: SkipService) {
         val b = Rect()
         n.getBoundsInScreen(b)
         return b.width() * b.height()
+    }
+
+    /**
+     * 把「跳过 5」「跳过广告 3s」里的倒计时尾巴剥掉，留下稳定部分「跳过」「跳过广告」。
+     * 纯数字文案（如「5s」）会被剥成空串，交给 digitRegex 处理。
+     */
+    private fun stripCountdown(text: String): String =
+        text.trim().replace(Regex("""[\s:：]*\d{1,3}\s*(s|S|秒)?$"""), "").trim()
+
+    /**
+     * 把「跳过 5」这类文案转成「跳过 \d{1,3}」的正则，
+     * 这样下次倒计时变成「跳过 4」也照样命中。
+     */
+    private fun digitRegex(text: String): String {
+        val sb = StringBuilder()
+        var inDigit = false
+        for (ch in text.trim()) {
+            if (ch.isDigit()) {
+                if (!inDigit) {
+                    sb.append("\\d{1,3}")
+                    inDigit = true
+                }
+            } else {
+                inDigit = false
+                sb.append(Regex.escape(ch.toString()))
+            }
+        }
+        return sb.toString()
     }
 
     private fun dp(v: Int): Int = (v * svc.resources.displayMetrics.density).toInt()

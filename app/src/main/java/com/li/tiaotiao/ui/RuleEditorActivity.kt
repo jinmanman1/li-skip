@@ -360,12 +360,12 @@ class RuleEditorActivity : AppCompatActivity() {
         rule.maxWidthFrac = when {
             wText.isNotEmpty() -> wText.toFloatOrNull() ?: rule.maxWidthFrac
             mode == R.id.rbPos -> sizeW[spSize.selectedItemPosition]
-            else -> 0.45f
+            else -> rule.maxWidthFrac
         }
         rule.maxHeightFrac = when {
             hText.isNotEmpty() -> hText.toFloatOrNull() ?: rule.maxHeightFrac
             mode == R.id.rbPos -> sizeH[spSize.selectedItemPosition]
-            else -> 0.16f
+            else -> rule.maxHeightFrac
         }
 
         val colorText = etProbeColor.text.toString().trim()

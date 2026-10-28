@@ -67,9 +67,22 @@ object AppPicker {
             }
         }
 
+        // 固定高度，避免 AlertDialog + ListView 时列表塌成一行
+        val density = ctx.resources.displayMetrics.density
+        val height = (420 * density).toInt()
+        val container = android.widget.FrameLayout(ctx).apply {
+            addView(
+                listView,
+                android.view.ViewGroup.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                    height
+                )
+            )
+        }
+
         AlertDialog.Builder(ctx)
             .setTitle("选择要生效的应用")
-            .setView(listView)
+            .setView(container)
             .setPositiveButton("确定") { _, _ ->
                 onDone(apps.filterIndexed { i, _ -> checked[i] }.map { it.pkg })
             }

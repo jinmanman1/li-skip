@@ -42,7 +42,7 @@ class MainActivity : AppCompatActivity() {
     private val logListener: (String) -> Unit = { line ->
         handler.post {
             logLines.addLast(line)
-            while (logLines.size > 40) logLines.removeFirst()
+            while (logLines.size > 80) logLines.removeFirst()
             logText.text = logLines.joinToString("\n")
         }
     }
@@ -118,7 +118,9 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             svc.startPicker { runOnUiThread { refreshRules() } }
-            toast("小球已出现，切到目标 App，走到广告页，再点小球")
+            toast("小球已出现，去目标 App 等开屏广告，然后点小球")
+            // 直接退回上一个 App，省得用户自己找
+            moveTaskToBack(true)
         }
 
         findViewById<MaterialButton>(R.id.btnNew).setOnClickListener {
@@ -147,6 +149,16 @@ class MainActivity : AppCompatActivity() {
                     toast("已恢复默认规则")
                 }
                 .show()
+        }
+
+        findViewById<MaterialButton>(R.id.btnDiag).setOnClickListener {
+            val svc = SkipService.instance
+            if (svc == null) {
+                toast("请先开启无障碍服务")
+                return@setOnClickListener
+            }
+            svc.dumpLastTree()
+            toast("已把最近一次扫描到的界面写进下面的日志")
         }
 
         findViewById<MaterialButton>(R.id.btnClearLog).setOnClickListener {

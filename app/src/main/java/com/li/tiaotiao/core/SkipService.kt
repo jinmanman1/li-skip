@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -16,7 +17,10 @@ import android.view.accessibility.AccessibilityNodeInfo
 /**
  * 核心无障碍服务。
  *
- * 事件流：窗口切换 / 内容变化 → 去抖 → 扫一遍节点树 → 多因子打分 → 二次确认 → 点击 → 冷却。
+ * 扫描策略改成三重保险，不再单靠事件：
+ *   1) 事件触发：内容变化时节流合并（注意是节流，不是去抖 —— 去抖会被动画无限推迟）
+ *   2) 突发扫描：切到新 App 后 0~6 秒内密集扫 11 次，专治开屏广告
+ *   3) 心跳兜底：前台有 App 时每 0.4s（开屏期）/ 1.2s（平时）扫一次
  */
 class SkipService : AccessibilityService() {
 
@@ -24,8 +28,9 @@ class SkipService : AccessibilityService() {
         @Volatile
         var instance: SkipService? = null
 
-        private const val MAX_NODES = 900
+        private const val MAX_NODES = 700
         private const val MAX_DEPTH = 40
+        private const val BURST_WINDOW = 6500L
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -37,9 +42,45 @@ class SkipService : AccessibilityService() {
         private set
 
     private var launchAt = 0L
+    private var lastScanAt = 0L
+    private var pausedAt = 0L
     private val lastFire = HashMap<String, Long>()
     private var pending: Pending? = null
     private var picker: Picker? = null
+    private val tip: SkipTip by lazy { SkipTip(this) }
+    private val power: PowerManager by lazy {
+        getSystemService(Context.POWER_SERVICE) as PowerManager
+    }
+    private val retried = HashMap<String, Long>()
+
+    private var lastTree: List<String> = emptyList()
+    private var lastTreePkg: String = ""
+
+    private var scanQueued = false
+    private val scanRunnable = Runnable {
+        scanQueued = false
+        scan()
+    }
+    private val burstRunnable = Runnable { scan() }
+
+    private val heartbeat = object : Runnable {
+        override fun run() {
+            val now = SystemClock.uptimeMillis()
+            // 拾取器如果被系统回收，暂停状态卡住超过 90 秒自动恢复
+            if (paused && picker == null && now - pausedAt > 90_000) {
+                paused = false
+                LogBus.log("拾取超时，已自动恢复跳过")
+            }
+            if (!paused && Settings.enabled(this@SkipService) &&
+                pkg.isNotEmpty() && pkg != packageName &&
+                now - lastScanAt >= 200
+            ) {
+                scan()
+            }
+            val delay = if (now - launchAt < BURST_WINDOW) 400L else 1200L
+            handler.postDelayed(this, delay)
+        }
+    }
 
     private data class Cand(
         val node: AccessibilityNodeInfo,
@@ -60,18 +101,17 @@ class SkipService : AccessibilityService() {
     var paused = false
         set(v) {
             field = v
-            if (!v) handler.postDelayed(scanRunnable, 250)
+            if (v) {
+                pausedAt = SystemClock.uptimeMillis()
+            } else {
+                schedule(200)
+            }
         }
-
-    private val scanRunnable = Runnable { scan() }
-
-    private val tip: SkipTip by lazy { SkipTip(this) }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         reloadRules()
-        // 服务启动时先把当前前台包名记下来，否则第一次扫描会因为 pkg 为空而直接返回
         runCatching {
             val r = rootInActiveWindow
             val p = r?.packageName?.toString().orEmpty()
@@ -81,7 +121,9 @@ class SkipService : AccessibilityService() {
                 launchAt = SystemClock.uptimeMillis()
             }
         }
-        LogBus.log("无障碍服务已连接，已加载 ${rules.size} 条规则")
+        handler.removeCallbacks(heartbeat)
+        handler.post(heartbeat)
+        LogBus.log("服务已连接，规则 ${rules.size} 条")
     }
 
     override fun onInterrupt() {
@@ -100,49 +142,83 @@ class SkipService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val ev = event ?: return
-        if (paused) return
         if (!Settings.enabled(this)) return
 
-        when (ev.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                val p = ev.packageName?.toString().orEmpty()
-                val c = ev.className?.toString().orEmpty()
-                if (p.isNotEmpty()) onWindowChanged(p, c)
+        if (ev.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val p = ev.packageName?.toString().orEmpty()
+            val c = ev.className?.toString().orEmpty()
+            if (p.isNotEmpty()) {
+                if (paused) {
+                    // 拾取过程中也要跟着更新前台包名，
+                    // 否则拾取器拿到的 pkg 还停留在「Li 跳过」自己身上，生成的规则会绑错 App
+                    if (p != packageName) {
+                        pkg = p
+                        activityName = c
+                    }
+                } else {
+                    onWindowChanged(p, c)
+                }
             }
+            return
+        }
 
+        if (paused) return
+
+        when (ev.eventType) {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED,
-            AccessibilityEvent.TYPE_VIEW_SCROLLED -> schedule(150)
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> schedule(120)
 
             else -> Unit
         }
     }
 
     private fun onWindowChanged(p: String, c: String) {
-        // 自己的界面不参与自动跳过，避免误点自己的开关
         if (p == packageName) {
             pkg = p
             activityName = c
             return
         }
+
         if (p != pkg) {
-            if (pkg.isNotEmpty()) LogBus.log("前台切换 → $p")
             pkg = p
             activityName = c
             launchAt = SystemClock.uptimeMillis()
             pending = null
             lastFire.clear()
+            lastTree = emptyList()
             reloadRules()
+            LogBus.log("前台 → $p")
+            burst()
         } else if (c.isNotEmpty() && c != activityName) {
             activityName = c
         }
 
         val splash = SystemClock.uptimeMillis() - launchAt <= Settings.splashWindow(this)
         tryActivityRules(p, c, splash)
-        schedule(160)
+        schedule(150)
     }
 
-    /** 一类特殊规则：不看节点树，命中广告 SDK 的 Activity 就直接动作 */
+    /** 切到新 App 后的密集扫描，开屏广告基本都在这个窗口里出现 */
+    private fun burst() {
+        handler.removeCallbacks(burstRunnable)
+        val delays = longArrayOf(80, 200, 380, 620, 900, 1250, 1700, 2300, 3100, 4200, 5600)
+        for (d in delays) handler.postDelayed(burstRunnable, d)
+    }
+
+    /** 节流：已经有扫描在排队就不再往后推，否则动画页面会把扫描无限延后 */
+    private fun schedule(delay: Long) {
+        if (scanQueued) return
+        scanQueued = true
+        handler.postDelayed(scanRunnable, delay)
+    }
+
+    private fun scheduleConfirm(delay: Long) {
+        scanQueued = true
+        handler.removeCallbacks(scanRunnable)
+        handler.postDelayed(scanRunnable, delay)
+    }
+
     private fun tryActivityRules(p: String, cls: String, splash: Boolean) {
         if (cls.isEmpty()) return
         for (r in rules) {
@@ -161,85 +237,107 @@ class SkipService : AccessibilityService() {
         }
     }
 
-    private fun schedule(delay: Long) {
-        handler.removeCallbacks(scanRunnable)
-        handler.postDelayed(scanRunnable, delay)
-    }
-
     private fun scan() {
         if (paused || !Settings.enabled(this)) return
         if (pkg.isEmpty() || pkg == packageName) return
+        // 息屏时不扫，省电
+        if (!runCatching { power.isInteractive }.getOrDefault(true)) return
         val root = runCatching { rootInActiveWindow }.getOrNull() ?: return
         if (rules.isEmpty()) reloadRules()
 
+        lastScanAt = SystemClock.uptimeMillis()
         val (sw, sh) = screenSize()
-        val splash = SystemClock.uptimeMillis() - launchAt <= Settings.splashWindow(this)
+        val splash = lastScanAt - launchAt <= Settings.splashWindow(this)
         val ctx = MatchEngine.Ctx(sw, sh, splash, pkg, activityName)
 
-        // 第一步：如果上一轮留了「待确认」候选，这一轮只做校验，确认没变才点
-        pending?.let { pd ->
+        val nodes = ArrayList<AccessibilityNodeInfo>(256)
+        collect(root, nodes)
+        if (nodes.isEmpty()) return
+
+        val snaps = ArrayList<MatchEngine.Snap>(nodes.size)
+        for (n in nodes) snaps.add(MatchEngine.Snap(n))
+        recordTree(snaps)
+
+        // 上一轮留下的待确认候选：确认没动就点，没找到就继续正常扫描（不再直接 return）
+        val pd = pending
+        if (pd != null) {
             pending = null
-            val nodes = ArrayList<AccessibilityNodeInfo>(256)
-            collect(root, 0, nodes)
-            val node = findSameNode(nodes, pd)
-            if (node != null) {
-                val r = rules.firstOrNull { it.id == pd.ruleId }
-                if (r != null && r.enabled) {
-                    LogBus.log("二次确认通过 → 点击「${r.name}」(${pd.score})")
-                    fire(r, node, pd.score)
-                    return
-                }
+            val idx = findSameIndex(snaps, pd)
+            val r = rules.firstOrNull { it.id == pd.ruleId }
+            if (idx >= 0 && r != null && r.enabled) {
+                LogBus.log("确认 → 「${r.name}」(${pd.score})")
+                fire(r, snaps[idx].node, pd.score)
+                return
             }
-            schedule(180)
-            return
         }
 
-        val nodes = ArrayList<AccessibilityNodeInfo>(256)
-        collect(root, 0, nodes)
+        val verbose = Settings.verbose(this)
+        val misses = ArrayList<String>()
+        var best: Cand? = null
 
-        val cands = ArrayList<Cand>()
         for (r in rules) {
             if (!r.enabled || r.activityOnly) continue
             if (!r.appliesTo(pkg)) continue
             if (r.onlySplash && !splash) continue
             if (!cooldownOk(r)) continue
-            for (n in nodes) {
-                val s = MatchEngine.score(n, r, ctx)
-                if (s >= r.minScore) cands.add(Cand(n, r, s))
-            }
-        }
-        if (cands.isEmpty()) return
-
-        cands.sortByDescending { it.score }
-        val best = cands.first()
-        if (Settings.verbose(this)) {
-            LogBus.log("候选 ${cands.size} 个，最高分 ${best.score}「${best.rule.name}」")
-        }
-
-        // 有像素探针的，先截图取色校验
-        val probe = best.rule.probe
-        if (probe != null) {
-            Screenshotter.capture(this) { bmp ->
-                val ok = bmp != null && Screenshotter.pixelMatches(bmp, probe)
-                if (ok) {
-                    handler.post { startConfirmOrFire(best) }
-                } else {
-                    LogBus.log("像素探针不匹配，跳过「${best.rule.name}」")
+            for (s in snaps) {
+                val e = MatchEngine.evaluate(s, r, ctx)
+                val cur = best
+                if (e.score > 0 && e.score >= r.minScore) {
+                    if (cur == null || e.score > cur.score) best = Cand(s.node, r, e.score)
+                } else if (verbose && misses.size < 6) {
+                    if (e.score > 0) {
+                        misses.add("${r.name}=${e.score}分")
+                    } else if (e.reason.isNotEmpty()) {
+                        misses.add("${r.name}:${e.reason}")
+                    }
                 }
             }
-        } else {
-            startConfirmOrFire(best)
         }
+
+        val b = best
+        if (b == null) {
+            if (verbose && misses.isNotEmpty()) {
+                LogBus.log("未命中 | " + misses.distinct().joinToString("，"))
+            }
+            return
+        }
+
+        LogBus.log("候选「${b.rule.name}」${b.score}分")
+        startConfirmOrFire(b)
     }
 
     private fun startConfirmOrFire(c: Cand) {
         if (paused) return
+        // 配了像素校验的规则：先截一张图取色，颜色不对就放弃
+        val probe = c.rule.probe
+        if (probe != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Screenshotter.capture(this) { bmp ->
+                if (bmp == null) {
+                    // 机型不支持截图（或刚好失败）时不要卡死这条规则，放行并记一笔
+                    LogBus.log("截图不可用，「${c.rule.name}」跳过像素校验")
+                    handler.post { scheduleConfirmOrFire(c) }
+                    return@capture
+                }
+                if (Screenshotter.pixelMatches(bmp, probe)) {
+                    handler.post { scheduleConfirmOrFire(c) }
+                } else {
+                    LogBus.log("「${c.rule.name}」像素校验不通过，放弃")
+                }
+            }
+            return
+        }
+        scheduleConfirmOrFire(c)
+    }
+
+    private fun scheduleConfirmOrFire(c: Cand) {
+        if (paused) return
         val delay = Settings.confirmDelay(this)
         if (delay > 0) {
-            val b = Rect()
-            c.node.getBoundsInScreen(b)
-            pending = Pending(c.rule.id, b.left, b.top, b.right, b.bottom, c.score)
-            handler.postDelayed(scanRunnable, delay)
+            val r = Rect()
+            c.node.getBoundsInScreen(r)
+            pending = Pending(c.rule.id, r.left, r.top, r.right, r.bottom, c.score)
+            scheduleConfirm(delay)
         } else {
             fire(c.rule, c.node, c.score)
         }
@@ -249,29 +347,46 @@ class SkipService : AccessibilityService() {
         lastFire[rule.id] = SystemClock.uptimeMillis()
         val savedMs = estimateSavedMs(node)
         Stats.record(this, savedMs)
-        LogBus.log("执行「${rule.name}」score=$score action=${rule.action.name} 省${savedMs / 1000}s")
-        if (Settings.toastOnSkip(this)) {
-            tip.show("已跳过广告 · 省 ${savedMs / 1000} 秒")
-        }
+        LogBus.log("执行「${rule.name}」score=$score 省${savedMs / 1000}s")
+        if (Settings.toastOnSkip(this)) tip.show("已跳过广告 · 省 ${savedMs / 1000} 秒")
         doAction(rule.action, node)
+
+        // 点完再回访一次：按钮还在就自动换个点法重试一次
+        handler.postDelayed({ verifyAndRetry(rule, node) }, 900)
     }
 
     /**
-     * 估算这一跳省了几秒：按钮上常带倒计时（「跳过 3」），能读到就直接用，
-     * 读不到按常见开屏 5 秒算。
+     * 点击验证 + 自动兜底重试。
+     * 有些广告层的「跳过」本身不可点击，或者 ACTION_CLICK 被广告 SDK 吞掉，
+     * 这时直接按坐标补一下通常能点动。
      */
+    private fun verifyAndRetry(rule: Rule, node: AccessibilityNodeInfo) {
+        if (rule.action != RuleAction.CLICK && rule.action != RuleAction.CLICK_PARENT) return
+        val still = runCatching { node.refresh() && node.isVisibleToUser }.getOrDefault(false)
+        if (!still) return
+
+        val last = retried[rule.id] ?: 0L
+        if (SystemClock.uptimeMillis() - last < 2500) return
+        retried[rule.id] = SystemClock.uptimeMillis()
+
+        val b = Rect()
+        runCatching { node.getBoundsInScreen(b) }
+        if (b.width() <= 0) return
+
+        LogBus.log("「${rule.name}」没点动，改用坐标点击重试")
+        tap(b.centerX().toFloat(), b.centerY().toFloat())
+    }
+
     private fun estimateSavedMs(node: AccessibilityNodeInfo): Long {
         var n: AccessibilityNodeInfo? = node
         var depth = 0
         while (n != null && depth < 3) {
-            val digits = (n.text?.toString().orEmpty())
-                .filter { it.isDigit() }
-                .take(2)
+            val digits = (n.text?.toString().orEmpty()).filter { it.isDigit() }.take(2)
             if (digits.isNotEmpty()) {
                 val v = digits.toIntOrNull() ?: 0
                 if (v in 1..90) return v * 1000L
             }
-            n = n.parent
+            n = runCatching { n?.parent }.getOrNull()
             depth++
         }
         return 5000L
@@ -324,29 +439,72 @@ class SkipService : AccessibilityService() {
         runCatching { dispatchGesture(g, null, null) }
     }
 
-    private fun collect(node: AccessibilityNodeInfo?, depth: Int, out: MutableList<AccessibilityNodeInfo>) {
-        if (node == null || depth > MAX_DEPTH || out.size >= MAX_NODES) return
-        if (node.isVisibleToUser) out.add(node)
-        for (i in 0 until node.childCount) {
-            collect(node.getChild(i), depth + 1, out)
-            if (out.size >= MAX_NODES) return
+    /**
+     * 广度优先收集节点。
+     * 用 BFS 而不是 DFS：开屏广告的浮层通常是根布局里「最后添加的那个子节点」，
+     * DFS 在节点数超过上限时很可能先扫完主界面内容就停了，永远看不到广告浮层。
+     */
+    private fun collect(root: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>) {
+        if (root == null) return
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.addLast(root to 0)
+        while (queue.isNotEmpty() && out.size < MAX_NODES) {
+            val item = queue.removeFirst()
+            val n = item.first
+            val depth = item.second
+            if (n.isVisibleToUser) out.add(n)
+            if (depth >= MAX_DEPTH) continue
+            for (i in 0 until n.childCount) {
+                val c = n.getChild(i) ?: continue
+                queue.addLast(c to depth + 1)
+            }
         }
     }
 
-    private fun findSameNode(nodes: List<AccessibilityNodeInfo>, pd: Pending): AccessibilityNodeInfo? {
-        var best: AccessibilityNodeInfo? = null
+    private fun findSameIndex(snaps: List<MatchEngine.Snap>, pd: Pending): Int {
+        var bestIdx = -1
         var bestD = Int.MAX_VALUE
-        for (n in nodes) {
-            val b = Rect()
-            n.getBoundsInScreen(b)
+        for (i in snaps.indices) {
+            val b = snaps[i].bounds
             val d = kotlin.math.abs(b.left - pd.left) + kotlin.math.abs(b.top - pd.top) +
                 kotlin.math.abs(b.right - pd.right) + kotlin.math.abs(b.bottom - pd.bottom)
-            if (d < bestD && d <= 24) {
+            if (d < bestD && d <= 32) {
                 bestD = d
-                best = n
+                bestIdx = i
             }
         }
-        return best
+        return bestIdx
+    }
+
+    // ---------- 诊断 ----------
+
+    private fun recordTree(snaps: List<MatchEngine.Snap>) {
+        val out = ArrayList<String>(64)
+        for (s in snaps) {
+            if (out.size >= 60) break
+            if (s.text.isEmpty() && s.desc.isEmpty() && !s.clickable) continue
+            out.add(
+                (if (s.clickable) "C " else "- ") +
+                    s.cls.substringAfterLast('.') +
+                    " t=\"" + s.text + "\"" +
+                    " d=\"" + s.desc + "\"" +
+                    " id=" + s.viewId.substringAfterLast('/') +
+                    " b=[" + s.bounds.left + "," + s.bounds.top + "," + s.bounds.right + "," + s.bounds.bottom + "]"
+            )
+        }
+        lastTree = out
+        lastTreePkg = "$pkg / $activityName"
+    }
+
+    /** 把最近一次扫描到的界面结构打到日志里，方便排查为什么不跳 */
+    fun dumpLastTree() {
+        if (lastTree.isEmpty()) {
+            LogBus.log("诊断：还没抓到界面，先切到目标 App 停留几秒再来")
+            return
+        }
+        LogBus.log("===== 诊断 $lastTreePkg =====")
+        lastTree.forEach { LogBus.log(it) }
+        LogBus.log("===== 共 ${lastTree.size} 个节点 =====")
     }
 
     fun screenSize(): Pair<Int, Int> {
@@ -360,7 +518,6 @@ class SkipService : AccessibilityService() {
         }
     }
 
-    /** 唤起「点一下就学会」的拾取器 */
     fun startPicker(onDone: () -> Unit) {
         if (picker != null) return
         val p = Picker(this)
@@ -372,7 +529,7 @@ class SkipService : AccessibilityService() {
             if (rule != null) {
                 RuleStore.add(rule)
                 reloadRules()
-                LogBus.log("已生成规则：${rule.name}｜${rule.describe()}")
+                LogBus.log("已生成规则：${rule.name}")
             }
             onDone()
         }
