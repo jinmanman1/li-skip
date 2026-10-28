@@ -3,6 +3,7 @@ package com.li.tiaotiao.core
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
+import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
@@ -13,6 +14,7 @@ import android.os.SystemClock
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 
 /**
  * 核心无障碍服务。
@@ -52,9 +54,58 @@ class SkipService : AccessibilityService() {
         getSystemService(Context.POWER_SERVICE) as PowerManager
     }
     private val retried = HashMap<String, Long>()
+    private val pendingAt = HashMap<String, Long>()
+    private val realAppCache = HashMap<String, Boolean>()
+    private var lastVerboseAt = 0L
 
-    private var lastTree: List<String> = emptyList()
-    private var lastTreePkg: String = ""
+    /** 装了桌面图标才算「真应用」，systemui / 任务管理器 / 输入法都不算 */
+    private fun isRealApp(p: String): Boolean {
+        realAppCache[p]?.let { return it }
+        val ok = runCatching {
+            val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(p)
+            packageManager.queryIntentActivities(i, 0).isNotEmpty()
+        }.getOrDefault(false)
+        realAppCache[p] = ok
+        return ok
+    }
+
+    private data class Root(val node: AccessibilityNodeInfo, val pkg: String)
+
+    /**
+     * 从所有可见窗口里挑出「真正的前台应用窗口」。
+     * 不能只用 rootInActiveWindow：MIUI 上它经常指向 systemui，
+     * 导致我们对着状态栏匹配，广告一个节点都看不到。
+     */
+    private fun pickRoot(): Root? {
+        val wins = runCatching { windows }.getOrNull().orEmpty()
+
+        val apps = ArrayList<Pair<AccessibilityWindowInfo, Root>>()
+        for (w in wins) {
+            val r = runCatching { w.root }.getOrNull() ?: continue
+            val p = runCatching { r.packageName?.toString() }.getOrNull().orEmpty()
+            if (p.isEmpty() || p == packageName) continue
+            if (!isRealApp(p)) continue
+            apps.add(w to Root(r, p))
+        }
+        if (apps.isEmpty()) {
+            // 某些机型 getWindows() 拿不到列表，退回到 rootInActiveWindow
+            val r = runCatching { rootInActiveWindow }.getOrNull() ?: return null
+            val p = runCatching { r.packageName?.toString() }.getOrNull().orEmpty()
+            if (p.isNotEmpty() && p != packageName) return Root(r, p)
+            return null
+        }
+
+        // 优先级：活跃的应用窗口 > 任意应用窗口 > 任意窗口
+        apps.firstOrNull { it.first.isActive && it.first.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            ?.let { return it.second }
+        apps.firstOrNull { it.first.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            ?.let { return it.second }
+        return apps.first().second
+    }
+
+    private data class TreeSnap(val where: String, val time: Long, val lines: List<String>)
+
+    private val treeHistory = ArrayDeque<TreeSnap>()
 
     private var scanQueued = false
     private val scanRunnable = Runnable {
@@ -71,10 +122,8 @@ class SkipService : AccessibilityService() {
                 paused = false
                 LogBus.log("拾取超时，已自动恢复跳过")
             }
-            if (!paused && Settings.enabled(this@SkipService) &&
-                pkg.isNotEmpty() && pkg != packageName &&
-                now - lastScanAt >= 200
-            ) {
+            // 不再依赖 pkg 判断（pkg 可能因为系统窗口而滞后），交给 pickRoot 自己找
+            if (!paused && Settings.enabled(this@SkipService) && now - lastScanAt >= 200) {
                 scan()
             }
             val delay = if (now - launchAt < BURST_WINDOW) 400L else 1200L
@@ -179,6 +228,10 @@ class SkipService : AccessibilityService() {
             activityName = c
             return
         }
+        // MIUI 上 systemui / 任务管理器会频繁抢「前台」，
+        // 把 pkg 变成它们之后，扫描就全对着状态栏做了，广告永远匹配不到。
+        // 只认「装了桌面图标的应用」。
+        if (!isRealApp(p)) return
 
         if (p != pkg) {
             pkg = p
@@ -186,7 +239,6 @@ class SkipService : AccessibilityService() {
             launchAt = SystemClock.uptimeMillis()
             pending = null
             lastFire.clear()
-            lastTree = emptyList()
             reloadRules()
             LogBus.log("前台 → $p")
             burst()
@@ -239,16 +291,20 @@ class SkipService : AccessibilityService() {
 
     private fun scan() {
         if (paused || !Settings.enabled(this)) return
-        if (pkg.isEmpty() || pkg == packageName) return
         // 息屏时不扫，省电
         if (!runCatching { power.isInteractive }.getOrDefault(true)) return
-        val root = runCatching { rootInActiveWindow }.getOrNull() ?: return
         if (rules.isEmpty()) reloadRules()
+
+        // 不用 rootInActiveWindow：MIUI 上它经常指向 systemui
+        val picked = pickRoot() ?: return
+        val root = picked.node
+        val scanPkg = picked.pkg
+        if (scanPkg == packageName) return
 
         lastScanAt = SystemClock.uptimeMillis()
         val (sw, sh) = screenSize()
         val splash = lastScanAt - launchAt <= Settings.splashWindow(this)
-        val ctx = MatchEngine.Ctx(sw, sh, splash, pkg, activityName)
+        val ctx = MatchEngine.Ctx(sw, sh, splash, scanPkg, activityName)
 
         val nodes = ArrayList<AccessibilityNodeInfo>(256)
         collect(root, nodes)
@@ -256,7 +312,7 @@ class SkipService : AccessibilityService() {
 
         val snaps = ArrayList<MatchEngine.Snap>(nodes.size)
         for (n in nodes) snaps.add(MatchEngine.Snap(n))
-        recordTree(snaps)
+        recordTree(snaps, scanPkg)
 
         // 上一轮留下的待确认候选：确认没动就点，没找到就继续正常扫描（不再直接 return）
         val pd = pending
@@ -277,7 +333,7 @@ class SkipService : AccessibilityService() {
 
         for (r in rules) {
             if (!r.enabled || r.activityOnly) continue
-            if (!r.appliesTo(pkg)) continue
+            if (!r.appliesTo(scanPkg)) continue
             if (r.onlySplash && !splash) continue
             if (!cooldownOk(r)) continue
             for (s in snaps) {
@@ -296,12 +352,15 @@ class SkipService : AccessibilityService() {
         }
 
         val b = best
-        if (b == null) {
-            if (verbose && misses.isNotEmpty()) {
-                LogBus.log("未命中 | " + misses.distinct().joinToString("，"))
-            }
-            return
+        if (verbose && lastScanAt - lastVerboseAt > 1500) {
+            lastVerboseAt = lastScanAt
+            LogBus.log(
+                "扫描 " + scanPkg.substringAfterLast('.') + " 节点" + snaps.size +
+                    (if (b == null) " 无命中" else " 命中「" + b.rule.name + "」" + b.score) +
+                    (if (misses.isEmpty()) "" else " | " + misses.distinct().take(3).joinToString("，"))
+            )
         }
+        if (b == null) return
 
         LogBus.log("候选「${b.rule.name}」${b.score}分")
         startConfirmOrFire(b)
@@ -334,6 +393,12 @@ class SkipService : AccessibilityService() {
         if (paused) return
         val delay = Settings.confirmDelay(this)
         if (delay > 0) {
+            // 确认失败时不要每 120ms 反复排队，否则会空转刷屏
+            val now = SystemClock.uptimeMillis()
+            val lastArm = pendingAt[c.rule.id] ?: 0L
+            if (now - lastArm < 250) return
+            pendingAt[c.rule.id] = now
+
             val r = Rect()
             c.node.getBoundsInScreen(r)
             pending = Pending(c.rule.id, r.left, r.top, r.right, r.bottom, c.score)
@@ -478,10 +543,10 @@ class SkipService : AccessibilityService() {
 
     // ---------- 诊断 ----------
 
-    private fun recordTree(snaps: List<MatchEngine.Snap>) {
-        val out = ArrayList<String>(64)
+    private fun recordTree(snaps: List<MatchEngine.Snap>, scanPkg: String) {
+        val out = ArrayList<String>(48)
         for (s in snaps) {
-            if (out.size >= 60) break
+            if (out.size >= 40) break
             if (s.text.isEmpty() && s.desc.isEmpty() && !s.clickable) continue
             out.add(
                 (if (s.clickable) "C " else "- ") +
@@ -492,19 +557,24 @@ class SkipService : AccessibilityService() {
                     " b=[" + s.bounds.left + "," + s.bounds.top + "," + s.bounds.right + "," + s.bounds.bottom + "]"
             )
         }
-        lastTree = out
-        lastTreePkg = "$pkg / $activityName"
+        if (out.isEmpty()) return
+        treeHistory.addLast(TreeSnap("$scanPkg / $activityName", SystemClock.uptimeMillis(), out))
+        // 只留最近两次：一次可能是广告页，一次是回到本 App 途中经过的桌面
+        while (treeHistory.size > 2) treeHistory.removeFirst()
     }
 
-    /** 把最近一次扫描到的界面结构打到日志里，方便排查为什么不跳 */
+    /** 把最近两次扫描到的界面结构打到日志里，方便排查为什么不跳 */
     fun dumpLastTree() {
-        if (lastTree.isEmpty()) {
+        if (treeHistory.isEmpty()) {
             LogBus.log("诊断：还没抓到界面，先切到目标 App 停留几秒再来")
             return
         }
-        LogBus.log("===== 诊断 $lastTreePkg =====")
-        lastTree.forEach { LogBus.log(it) }
-        LogBus.log("===== 共 ${lastTree.size} 个节点 =====")
+        val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.CHINA)
+        treeHistory.reversed().forEachIndexed { i, t ->
+            LogBus.log("===== 诊断#${i + 1} ${t.where} @${fmt.format(java.util.Date(t.time))} =====")
+            t.lines.forEach { LogBus.log(it) }
+        }
+        LogBus.log("===== 诊断结束 =====")
     }
 
     fun screenSize(): Pair<Int, Int> {

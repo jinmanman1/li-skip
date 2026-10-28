@@ -42,7 +42,7 @@ class MainActivity : AppCompatActivity() {
     private val logListener: (String) -> Unit = { line ->
         handler.post {
             logLines.addLast(line)
-            while (logLines.size > 80) logLines.removeFirst()
+            while (logLines.size > 130) logLines.removeFirst()
             logText.text = logLines.joinToString("\n")
         }
     }
@@ -276,7 +276,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun summary(r: Rule): String {
         val parts = mutableListOf<String>()
-        parts.add(if (r.packages.isEmpty()) "所有应用" else "指定 ${r.packages.size} 个应用")
+        parts.add(
+            when {
+                r.packages.isEmpty() -> "所有应用"
+                r.packages.size == 1 -> appLabel(r.packages[0])
+                else -> "${r.packages.size} 个应用"
+            }
+        )
         if (r.onlySplash) parts.add("仅开屏")
         when {
             r.keywords.isNotEmpty() -> parts.add("文字：" + r.keywords.take(2).joinToString("/"))
@@ -294,6 +300,12 @@ class MainActivity : AppCompatActivity() {
         )
         return parts.joinToString(" · ")
     }
+
+    /** 规则卡片上直接显示应用名，方便确认拾取时包名有没有绑对 */
+    private fun appLabel(pkg: String): String = runCatching {
+        val pm = packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+    }.getOrDefault(pkg)
 
     private fun isAccessibilityOn(): Boolean {
         val expected = ComponentName(this, SkipService::class.java)
