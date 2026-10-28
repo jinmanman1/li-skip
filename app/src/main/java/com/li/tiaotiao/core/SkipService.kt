@@ -55,6 +55,8 @@ class SkipService : AccessibilityService() {
     }
     private val retried = HashMap<String, Long>()
     private val pendingAt = HashMap<String, Long>()
+    private val fastTapAt = HashMap<String, Long>()
+    private var lastFastGlobal = 0L
     private val realAppCache = HashMap<String, Boolean>()
     private var lastVerboseAt = 0L
 
@@ -126,7 +128,7 @@ class SkipService : AccessibilityService() {
             if (!paused && Settings.enabled(this@SkipService) && now - lastScanAt >= 200) {
                 scan()
             }
-            val delay = if (now - launchAt < BURST_WINDOW) 400L else 1200L
+            val delay = if (now - launchAt < BURST_WINDOW) 150L else 800L
             handler.postDelayed(this, delay)
         }
     }
@@ -216,7 +218,7 @@ class SkipService : AccessibilityService() {
         when (ev.eventType) {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED,
-            AccessibilityEvent.TYPE_VIEW_SCROLLED -> schedule(120)
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> schedule(40)
 
             else -> Unit
         }
@@ -242,19 +244,55 @@ class SkipService : AccessibilityService() {
             reloadRules()
             LogBus.log("前台 → $p")
             burst()
+            fastTapTry(p)
         } else if (c.isNotEmpty() && c != activityName) {
             activityName = c
         }
 
         val splash = SystemClock.uptimeMillis() - launchAt <= Settings.splashWindow(this)
         tryActivityRules(p, c, splash)
-        schedule(150)
+        schedule(40)
+    }
+
+    /**
+     * 极速通道：应用切到前台的瞬间直接按记录坐标点一下，不等无障碍树渲染。
+     * 这是「广告来不及显示就被跳掉」的关键 —— 正常扫描要先等窗口画完、再遍历节点，
+     * 最快也要 150~300ms，那时广告已经露脸了。
+     */
+    private fun fastTapTry(p: String) {
+        val now = SystemClock.uptimeMillis()
+        // 全局节流：3 秒内只允许一组极速点击，避免频繁切 App 时到处乱点
+        if (now - lastFastGlobal < 3000) return
+        val (sw, sh) = screenSize()
+        if (sw <= 0 || sh <= 0) return
+
+        var any = false
+        for (r in rules) {
+            if (!r.enabled || !r.fastTap) continue
+            if (!r.appliesTo(p)) continue
+            val tx = r.tapX ?: continue
+            val ty = r.tapY ?: continue
+            val last = fastTapAt[r.id] ?: 0L
+            if (now - last < 2000) continue
+            fastTapAt[r.id] = now
+            any = true
+
+            val px = tx * sw
+            val py = ty * sh
+            LogBus.log("极速点击「${r.name}」")
+            handler.postDelayed({ tap(px, py) }, 90)
+            // 万一那一下点空了，500ms 后再补一次；期间正常扫描已经点过就不补
+            handler.postDelayed({
+                if ((lastFire[r.id] ?: 0L) <= now) tap(px, py)
+            }, 500)
+        }
+        if (any) lastFastGlobal = now
     }
 
     /** 切到新 App 后的密集扫描，开屏广告基本都在这个窗口里出现 */
     private fun burst() {
         handler.removeCallbacks(burstRunnable)
-        val delays = longArrayOf(80, 200, 380, 620, 900, 1250, 1700, 2300, 3100, 4200, 5600)
+        val delays = longArrayOf(30, 70, 130, 220, 340, 500, 720, 1000, 1400, 2000, 2800, 3800, 5200)
         for (d in delays) handler.postDelayed(burstRunnable, d)
     }
 

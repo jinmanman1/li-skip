@@ -97,6 +97,14 @@ data class Rule(
     var action: RuleAction = RuleAction.CLICK,
     var cooldownMs: Long = 1500,
     var probe: PixelProbe? = null,
+    /**
+     * 极速模式：应用切到前台的瞬间，先按记录好的坐标点一次，
+     * 不等无障碍树渲染完 —— 这样广告常常来不及显示就被跳掉。
+     * 代价是如果这次没有广告，这一下可能落在 App 自己的界面上。
+     */
+    var fastTap: Boolean = false,
+    var tapX: Float? = null,
+    var tapY: Float? = null,
     var note: String = ""
 ) {
 
@@ -142,6 +150,9 @@ data class Rule(
         put("action", action.name)
         put("cooldownMs", cooldownMs)
         put("probe", probe?.toJson() ?: JSONObject.NULL)
+        put("fastTap", fastTap)
+        put("tapX", tapX?.toDouble() ?: JSONObject.NULL)
+        put("tapY", tapY?.toDouble() ?: JSONObject.NULL)
         put("note", note)
     }
 
@@ -181,6 +192,9 @@ data class Rule(
                 .getOrDefault(RuleAction.CLICK),
             cooldownMs = o.optLong("cooldownMs", 1500),
             probe = PixelProbe.from(o.optJSONObject("probe")),
+            fastTap = o.optBoolean("fastTap", false),
+            tapX = if (o.isNull("tapX")) null else o.optDouble("tapX").toFloat(),
+            tapY = if (o.isNull("tapY")) null else o.optDouble("tapY").toFloat(),
             note = o.optString("note", "")
         )
     }

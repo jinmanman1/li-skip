@@ -285,6 +285,10 @@ class Picker(private val svc: SkipService) {
         rule.mustClickable = false
         rule.minScore = 80
         rule.cooldownMs = 1200
+        // 记下按钮中心的归一化坐标，用于「极速通道」：下次开屏不用等渲染直接点
+        rule.tapX = b.centerX().toFloat() / sw
+        rule.tapY = b.centerY().toFloat() / sh
+        rule.fastTap = true
         rule.note = "拾取于 $targetPkg / ${svc.activityName}".trim()
         return rule
     }

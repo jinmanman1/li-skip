@@ -58,6 +58,7 @@ class RuleEditorActivity : AppCompatActivity() {
     private lateinit var cbMustClickable: CheckBox
     private lateinit var cbAncestor: CheckBox
     private lateinit var cbPositional: CheckBox
+    private lateinit var cbFastTap: CheckBox
     private lateinit var etProbeX: EditText
     private lateinit var etProbeY: EditText
     private lateinit var etProbeColor: EditText
@@ -115,6 +116,7 @@ class RuleEditorActivity : AppCompatActivity() {
         cbMustClickable = findViewById(R.id.cbMustClickable)
         cbAncestor = findViewById(R.id.cbAncestor)
         cbPositional = findViewById(R.id.cbPositional)
+        cbFastTap = findViewById(R.id.cbFastTap)
         etProbeX = findViewById(R.id.etProbeX)
         etProbeY = findViewById(R.id.etProbeY)
         etProbeColor = findViewById(R.id.etProbeColor)
@@ -199,6 +201,7 @@ class RuleEditorActivity : AppCompatActivity() {
         cbMustClickable.isChecked = rule.mustClickable
         cbAncestor.isChecked = rule.allowAncestorClickable
         cbPositional.isChecked = rule.allowPositional
+        cbFastTap.isChecked = rule.fastTap
         rule.probe?.let {
             etProbeX.setText(it.x.toString())
             etProbeY.setText(it.y.toString())
@@ -223,7 +226,7 @@ class RuleEditorActivity : AppCompatActivity() {
         updateModeBlocks()
 
         val adv = rule.textRegex.isNotBlank() || rule.descRegex.isNotBlank() ||
-            rule.classNameContains.isNotBlank() || rule.probe != null
+            rule.classNameContains.isNotBlank() || rule.probe != null || rule.fastTap
         cbAdvanced.isChecked = adv
         blockAdvanced.visibility = if (adv) View.VISIBLE else View.GONE
 
@@ -387,6 +390,15 @@ class RuleEditorActivity : AppCompatActivity() {
 
         rule.note = etNote.text.toString().trim()
         rule.allowPositional = if (mode == R.id.rbPos) true else cbPositional.isChecked
+
+        // 极速模式：没有记录坐标就退化成「区域中心」
+        rule.fastTap = cbFastTap.isChecked
+        if (rule.fastTap && (rule.tapX == null || rule.tapY == null)) {
+            rule.region?.let { g ->
+                rule.tapX = (g.l + g.r) / 2f
+                rule.tapY = (g.t + g.b) / 2f
+            }
+        }
 
         RuleStore.upsert(rule)
         SkipService.instance?.reloadRules()

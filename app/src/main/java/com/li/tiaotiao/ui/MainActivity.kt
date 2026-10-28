@@ -284,6 +284,7 @@ class MainActivity : AppCompatActivity() {
             }
         )
         if (r.onlySplash) parts.add("仅开屏")
+        if (r.fastTap) parts.add("极速")
         when {
             r.keywords.isNotEmpty() -> parts.add("文字：" + r.keywords.take(2).joinToString("/"))
             r.textRegex.isNotBlank() -> parts.add("文字正则")

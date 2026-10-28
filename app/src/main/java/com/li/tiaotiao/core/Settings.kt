@@ -12,9 +12,9 @@ object Settings {
     fun enabled(c: Context) = sp(c).getBoolean("enabled", true)
     fun setEnabled(c: Context, v: Boolean) = sp(c).edit().putBoolean("enabled", v).apply()
 
-    /** 点击前二次确认（毫秒），0 表示不确认 */
-    fun confirmDelay(c: Context) = sp(c).getLong("confirm_ms", 120L)
-    fun setConfirmDelay(c: Context, v: Long) = sp(c).edit().putLong("confirm_ms", v).apply()
+    /** 点击前二次确认（毫秒），0 表示不确认。默认 0：确认会让开屏慢半拍 */
+    fun confirmDelay(c: Context) = sp(c).getLong("confirm_ms_v2", 0L)
+    fun setConfirmDelay(c: Context, v: Long) = sp(c).edit().putLong("confirm_ms_v2", v).apply()
 
     /** 开屏判定窗口（毫秒）：应用切到前台后多久内算开屏 */
     fun splashWindow(c: Context) = sp(c).getLong("splash_ms", 9000L)

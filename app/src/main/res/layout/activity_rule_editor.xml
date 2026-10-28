@@ -468,6 +468,13 @@
                 android:layout_height="wrap_content"
                 android:text="允许纯位置规则" />
 
+            <CheckBox
+                android:id="@+id/cbFastTap"
+                style="@style/Check"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="极速模式：开屏瞬间先按记录坐标点一次（更快，但可能误触）" />
+
             <TextView
                 style="@style/Label"
                 android:layout_width="match_parent"
