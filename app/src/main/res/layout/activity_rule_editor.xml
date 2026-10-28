@@ -12,269 +12,521 @@
 
         <TextView
             style="@style/Label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:text="规则名称" />
 
         <EditText
             android:id="@+id/etName"
             style="@style/Field"
-            android:hint="例如：某App 开屏跳过" />
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="给这条规则起个名字" />
 
         <TextView
             style="@style/Label"
-            android:text="生效的应用包名（逗号分隔，留空=所有应用）" />
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="对哪些应用生效" />
 
-        <EditText
-            android:id="@+id/etPackages"
-            style="@style/Field"
-            android:hint="com.example.app" />
-
-        <CheckBox
-            android:id="@+id/cbOnlySplash"
-            style="@style/Check"
-            android:text="只在开屏期间生效" />
-
-        <CheckBox
-            android:id="@+id/cbActivityOnly"
-            style="@style/Check"
-            android:text="只按 Activity 判断（不看节点树，用于广告SDK页面直接返回）" />
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnApps"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="所有应用" />
 
         <TextView
             style="@style/Label"
-            android:text="Activity 正则" />
-
-        <EditText
-            android:id="@+id/etActivityRegex"
-            style="@style/Field"
-            android:hint="openadsdk|pangle|qq\.e\." />
-
-        <TextView
-            style="@style/Label"
-            android:text="文字关键词（逗号分隔，任一命中，忽略大小写）" />
-
-        <EditText
-            android:id="@+id/etKeywords"
-            style="@style/Field"
-            android:hint="跳过,跳过广告,skip" />
-
-        <TextView
-            style="@style/Label"
-            android:text="文字匹配方式" />
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="什么时候生效" />
 
         <Spinner
-            android:id="@+id/spMode"
+            android:id="@+id/spTiming"
             android:layout_width="match_parent"
             android:layout_height="wrap_content" />
 
         <TextView
             style="@style/Label"
-            android:text="文字正则（可留空）" />
-
-        <EditText
-            android:id="@+id/etTextRegex"
-            style="@style/Field"
-            android:hint="跳过\s*\d+" />
-
-        <TextView
-            style="@style/Label"
-            android:text="viewId 正则（可留空）" />
-
-        <EditText
-            android:id="@+id/etViewId"
-            style="@style/Field"
-            android:hint=".*skip.*" />
-
-        <TextView
-            style="@style/Label"
-            android:text="contentDescription 正则（可留空）" />
-
-        <EditText
-            android:id="@+id/etDesc"
-            style="@style/Field"
-            android:hint="关闭|跳过" />
-
-        <TextView
-            style="@style/Label"
-            android:text="类名包含（可留空）" />
-
-        <EditText
-            android:id="@+id/etClass"
-            style="@style/Field"
-            android:hint="TextView" />
-
-        <TextView
-            style="@style/Label"
-            android:text="允许区域 l,t,r,b（0~1，相对屏幕，可留空）" />
-
-        <EditText
-            android:id="@+id/etRegion"
-            style="@style/Field"
-            android:hint="0.40,0,1,0.35" />
-
-        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:text="怎么认出这个按钮" />
+
+        <RadioGroup
+            android:id="@+id/rgMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <RadioButton
+                android:id="@+id/rbText"
+                style="@style/Check"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:text="按按钮上的文字（最常用）" />
+
+            <RadioButton
+                android:id="@+id/rbId"
+                style="@style/Check"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="按控件 ID（同一个 App 长期有效）" />
+
+            <RadioButton
+                android:id="@+id/rbPos"
+                style="@style/Check"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="按屏幕位置（图片按钮、没文字时用）" />
+        </RadioGroup>
+
+        <LinearLayout
+            android:id="@+id/blockText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <EditText
+                android:id="@+id/etKeywords"
+                style="@style/Field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="按钮上写了什么，多个用逗号隔开" />
 
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
 
-                <TextView
-                    style="@style/Label"
-                    android:text="最大宽度占比" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnKwSkip"
+                    style="@style/SmallBtn"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="跳过" />
 
-                <EditText
-                    android:id="@+id/etMaxW"
-                    style="@style/Field"
-                    android:inputType="numberDecimal"
-                    android:hint="0.45" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnKwClose"
+                    style="@style/SmallBtn"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="关闭" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnKwAd"
+                    style="@style/SmallBtn"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="广告" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnKwX"
+                    style="@style/SmallBtn"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="×" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/blockId"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <EditText
+                android:id="@+id/etViewId"
+                style="@style/Field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:hint="例如 skip_btn，支持片段匹配" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/blockPos"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="点一下按钮大概在屏幕的哪一格，再点一次可以取消"
+                android:textColor="@color/text_dim"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/cell0"
+                    style="@style/Cell"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_margin="3dp"
+                    android:layout_weight="1"
+                    android:text="左上" />
+
+                <Button
+                    android:id="@+id/cell1"
+                    style="@style/Cell"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_margin="3dp"
+                    android:layout_weight="1"
+                    android:text="上中" />
+
+                <Button
+                    android:id="@+id/cell2"
+                    style="@style/Cell"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_margin="3dp"
+                    android:layout_weight="1"
+                    android:text="右上" />
             </LinearLayout>
 
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
+                android:orientation="horizontal">
 
-                <TextView
-                    style="@style/Label"
-                    android:text="最大高度占比" />
+                <Button
+                    android:id="@+id/cell3"
+                    style="@style/Cell"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_margin="3dp"
+                    android:layout_weight="1"
+                    android:text="左中" />
 
-                <EditText
-                    android:id="@+id/etMaxH"
-                    style="@style/Field"
-                    android:inputType="numberDecimal"
-                    android:hint="0.16" />
+                <Button
+                    android:id="@+id/cell4"
+                    style="@style/Cell"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_margin="3dp"
+                    android:layout_weight="1"
+                    android:text="正中" />
+
+                <Button
+                    android:id="@+id/cell5"
+                    style="@style/Cell"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_margin="3dp"
+                    android:layout_weight="1"
+                    android:text="右中" />
             </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/cell6"
+                    style="@style/Cell"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_margin="3dp"
+                    android:layout_weight="1"
+                    android:text="左下" />
+
+                <Button
+                    android:id="@+id/cell7"
+                    style="@style/Cell"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_margin="3dp"
+                    android:layout_weight="1"
+                    android:text="下中" />
+
+                <Button
+                    android:id="@+id/cell8"
+                    style="@style/Cell"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_margin="3dp"
+                    android:layout_weight="1"
+                    android:text="右下" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="按钮大概多大" />
+
+            <Spinner
+                android:id="@+id/spSize"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
         </LinearLayout>
 
         <TextView
             style="@style/Label"
-            android:text="执行动作" />
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="识别到之后做什么" />
 
         <Spinner
             android:id="@+id/spAction"
             android:layout_width="match_parent"
             android:layout_height="wrap_content" />
 
-        <LinearLayout
+        <TextView
+            style="@style/Label"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal">
+            android:text="灵敏度" />
+
+        <Spinner
+            android:id="@+id/spSens"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <CheckBox
+            android:id="@+id/cbAdvanced"
+            style="@style/Check"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="显示高级选项（一般不用管）" />
+
+        <LinearLayout
+            android:id="@+id/blockAdvanced"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="文字正则（优先于关键词）" />
+
+            <EditText
+                android:id="@+id/etTextRegex"
+                style="@style/Field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="跳过\s*\d+" />
+
+            <TextView
+                style="@style/Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="控件描述正则" />
+
+            <EditText
+                android:id="@+id/etDesc"
+                style="@style/Field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="关闭|跳过" />
+
+            <TextView
+                style="@style/Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="类名包含" />
+
+            <EditText
+                android:id="@+id/etClass"
+                style="@style/Field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="TextView" />
+
+            <TextView
+                style="@style/Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="区域 l,t,r,b（0~1，留空=不限）" />
+
+            <EditText
+                android:id="@+id/etRegion"
+                style="@style/Field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="0.40,0,1,0.35" />
 
             <LinearLayout
-                android:layout_width="0dp"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
+                android:orientation="horizontal">
 
-                <TextView
-                    style="@style/Label"
-                    android:text="最低分数（越大越保守）" />
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/Label"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="最大宽度占比" />
+
+                    <EditText
+                        android:id="@+id/etMaxW"
+                        style="@style/Field"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="0.45"
+                        android:inputType="numberDecimal" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/Label"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="最大高度占比" />
+
+                    <EditText
+                        android:id="@+id/etMaxH"
+                        style="@style/Field"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="0.16"
+                        android:inputType="numberDecimal" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                style="@style/Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="最低分数 / 冷却（毫秒）" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
 
                 <EditText
                     android:id="@+id/etMinScore"
                     style="@style/Field"
-                    android:inputType="number"
-                    android:hint="75" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    style="@style/Label"
-                    android:text="冷却时间（毫秒）" />
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="75"
+                    android:inputType="number" />
 
                 <EditText
                     android:id="@+id/etCooldown"
                     style="@style/Field"
-                    android:inputType="number"
-                    android:hint="1500" />
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:hint="1500"
+                    android:inputType="number" />
             </LinearLayout>
+
+            <CheckBox
+                android:id="@+id/cbMustClickable"
+                style="@style/Check"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="节点必须可点击" />
+
+            <CheckBox
+                android:id="@+id/cbAncestor"
+                style="@style/Check"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="允许点到可点击的父节点" />
+
+            <CheckBox
+                android:id="@+id/cbPositional"
+                style="@style/Check"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="允许纯位置规则" />
+
+            <TextView
+                style="@style/Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="点击前颜色校验 x,y,#RRGGBB" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/etProbeX"
+                    style="@style/Field"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="0.9"
+                    android:inputType="numberDecimal" />
+
+                <EditText
+                    android:id="@+id/etProbeY"
+                    style="@style/Field"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:hint="0.1"
+                    android:inputType="numberDecimal" />
+
+                <EditText
+                    android:id="@+id/etProbeColor"
+                    style="@style/Field"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:hint="#RRGGBB" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/Label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="备注" />
+
+            <EditText
+                android:id="@+id/etNote"
+                style="@style/Field"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
         </LinearLayout>
-
-        <CheckBox
-            android:id="@+id/cbMustClickable"
-            style="@style/Check"
-            android:text="节点必须可点击（或其祖先可点击）" />
-
-        <CheckBox
-            android:id="@+id/cbAncestor"
-            style="@style/Check"
-            android:text="允许点击可点击的父节点" />
-
-        <CheckBox
-            android:id="@+id/cbPositional"
-            style="@style/Check"
-            android:text="允许纯位置规则（没有任何文本/id 条件）" />
-
-        <TextView
-            style="@style/Label"
-            android:text="像素探针（点击前校验某个点颜色，可留空）" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal">
-
-            <EditText
-                android:id="@+id/etProbeX"
-                style="@style/Field"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:inputType="numberDecimal"
-                android:hint="x 0~1" />
-
-            <EditText
-                android:id="@+id/etProbeY"
-                style="@style/Field"
-                android:layout_width="0dp"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:inputType="numberDecimal"
-                android:hint="y 0~1" />
-
-            <EditText
-                android:id="@+id/etProbeColor"
-                style="@style/Field"
-                android:layout_width="0dp"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:hint="#RRGGBB" />
-
-            <EditText
-                android:id="@+id/etTolerance"
-                style="@style/Field"
-                android:layout_width="0dp"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:inputType="number"
-                android:hint="容差" />
-        </LinearLayout>
-
-        <TextView
-            style="@style/Label"
-            android:text="备注" />
-
-        <EditText
-            android:id="@+id/etNote"
-            style="@style/Field"
-            android:hint="随便写点什么" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSave"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="保存" />
+            android:layout_marginTop="22dp"
+            android:text="保存规则" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnDelete"

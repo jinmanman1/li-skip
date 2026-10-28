@@ -2,9 +2,11 @@ package com.li.tiaotiao.ui
 
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
 import android.widget.LinearLayout
@@ -13,6 +15,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.li.tiaotiao.R
@@ -20,14 +23,18 @@ import com.li.tiaotiao.core.LogBus
 import com.li.tiaotiao.core.Rule
 import com.li.tiaotiao.core.RuleStore
 import com.li.tiaotiao.core.SkipService
+import com.li.tiaotiao.core.Stats
 import com.li.tiaotiao.core.Settings as AppSettings
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var statusText: TextView
+    private lateinit var statusSub: TextView
     private lateinit var rulesContainer: LinearLayout
     private lateinit var rulesHeader: TextView
     private lateinit var logText: TextView
+    private lateinit var statsSaved: TextView
+    private lateinit var statsDetail: TextView
 
     private val handler = Handler(Looper.getMainLooper())
     private val logLines = ArrayDeque<String>()
@@ -69,9 +76,12 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         statusText = findViewById(R.id.statusText)
+        statusSub = findViewById(R.id.statusSub)
         rulesContainer = findViewById(R.id.rulesContainer)
         rulesHeader = findViewById(R.id.rulesHeader)
         logText = findViewById(R.id.logText)
+        statsSaved = findViewById(R.id.statsSaved)
+        statsDetail = findViewById(R.id.statsDetail)
 
         findViewById<MaterialButton>(R.id.btnOpenService).setOnClickListener {
             runCatching {
@@ -81,9 +91,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         findViewById<MaterialButton>(R.id.btnBattery).setOnClickListener {
-            runCatching {
-                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-            }.onFailure { toast("请手动在系统设置里关闭电池优化") }
+            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            runCatching { startActivity(intent) }
+                .onFailure { toast("请手动在系统设置里关闭电池优化") }
         }
 
         val swGlobal = findViewById<MaterialSwitch>(R.id.swGlobal)
@@ -92,6 +102,10 @@ class MainActivity : AppCompatActivity() {
             AppSettings.setEnabled(this, v)
             toast(if (v) "已开启自动跳过" else "已暂停")
         }
+
+        val swToast = findViewById<MaterialSwitch>(R.id.swToast)
+        swToast.isChecked = AppSettings.toastOnSkip(this)
+        swToast.setOnCheckedChangeListener { _, v -> AppSettings.setToastOnSkip(this, v) }
 
         val swVerbose = findViewById<MaterialSwitch>(R.id.swVerbose)
         swVerbose.isChecked = AppSettings.verbose(this)
@@ -103,9 +117,7 @@ class MainActivity : AppCompatActivity() {
                 toast("请先开启无障碍服务")
                 return@setOnClickListener
             }
-            svc.startPicker {
-                runOnUiThread { refreshRules() }
-            }
+            svc.startPicker { runOnUiThread { refreshRules() } }
             toast("小球已出现，切到目标 App，走到广告页，再点小球")
         }
 
@@ -143,6 +155,12 @@ class MainActivity : AppCompatActivity() {
             logText.text = ""
         }
 
+        findViewById<MaterialButton>(R.id.btnResetStats).setOnClickListener {
+            Stats.reset(this)
+            refreshStats()
+            toast("统计已清零")
+        }
+
         logLines.addAll(LogBus.snapshot().takeLast(40))
         logText.text = logLines.joinToString("\n")
 
@@ -161,12 +179,40 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshAll() {
-        statusText.text = if (isAccessibilityOn()) {
-            "无障碍服务：已开启"
-        } else {
-            "无障碍服务：未开启（不开就完全不工作）"
-        }
+        refreshStatus()
+        refreshStats()
         refreshRules()
+    }
+
+    private fun refreshStatus() {
+        val acc = isAccessibilityOn()
+        val battery = batteryIgnored()
+
+        val btnOpen = findViewById<MaterialButton>(R.id.btnOpenService)
+        val btnBattery = findViewById<MaterialButton>(R.id.btnBattery)
+
+        if (acc) {
+            statusText.text = "无障碍服务：已授权"
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.primary))
+            statusSub.text = if (battery) {
+                "服务正在运行 · 电池优化已关闭"
+            } else {
+                "服务正在运行 · 建议再把电池优化关掉，免得被系统杀掉"
+            }
+            btnOpen.visibility = View.GONE
+        } else {
+            statusText.text = "无障碍服务：未授权"
+            statusText.setTextColor(ContextCompat.getColor(this, R.color.text))
+            statusSub.text = "不开启就完全不会工作"
+            btnOpen.visibility = View.VISIBLE
+        }
+
+        btnBattery.visibility = if (battery) View.GONE else View.VISIBLE
+    }
+
+    private fun refreshStats() {
+        statsSaved.text = Stats.human(Stats.totalMs(this))
+        statsDetail.text = "共跳过 ${Stats.count(this)} 次 · 今日 ${Stats.todayCount(this)} 次"
     }
 
     private fun refreshRules() {
@@ -181,16 +227,13 @@ class MainActivity : AppCompatActivity() {
             rulesContainer.addView(tv)
             return
         }
-
-        for (r in rules) {
-            rulesContainer.addView(buildRuleItem(r))
-        }
+        for (r in rules) rulesContainer.addView(buildRuleItem(r))
     }
 
     private fun buildRuleItem(r: Rule): View {
         val item = layoutInflater.inflate(R.layout.item_rule, rulesContainer, false)
         item.findViewById<TextView>(R.id.ruleName).text = r.name
-        item.findViewById<TextView>(R.id.ruleSummary).text = r.describe()
+        item.findViewById<TextView>(R.id.ruleSummary).text = summary(r)
 
         val sw = item.findViewById<MaterialSwitch>(R.id.ruleSwitch)
         sw.isChecked = r.enabled
@@ -201,9 +244,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         item.setOnClickListener {
-            startActivity(
-                Intent(this, RuleEditorActivity::class.java).putExtra("ruleId", r.id)
-            )
+            startActivity(Intent(this, RuleEditorActivity::class.java).putExtra("ruleId", r.id))
         }
 
         item.setOnLongClickListener {
@@ -221,13 +262,31 @@ class MainActivity : AppCompatActivity() {
         return item
     }
 
+    private fun summary(r: Rule): String {
+        val parts = mutableListOf<String>()
+        parts.add(if (r.packages.isEmpty()) "所有应用" else "指定 ${r.packages.size} 个应用")
+        if (r.onlySplash) parts.add("仅开屏")
+        when {
+            r.keywords.isNotEmpty() -> parts.add("文字：" + r.keywords.take(2).joinToString("/"))
+            r.textRegex.isNotBlank() -> parts.add("文字正则")
+            r.viewIdRegex.isNotBlank() -> parts.add("控件 ID")
+            r.allowPositional -> parts.add("按位置")
+        }
+        parts.add(
+            when (r.action) {
+                com.li.tiaotiao.core.RuleAction.CLICK -> "点击"
+                com.li.tiaotiao.core.RuleAction.CLICK_PARENT -> "点父节点"
+                com.li.tiaotiao.core.RuleAction.PRESS_BACK -> "按返回"
+                com.li.tiaotiao.core.RuleAction.SWIPE_UP -> "上滑"
+            }
+        )
+        return parts.joinToString(" · ")
+    }
+
     private fun isAccessibilityOn(): Boolean {
         val expected = ComponentName(this, SkipService::class.java)
         val raw = runCatching {
-            Settings.Secure.getString(
-                contentResolver,
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            )
+            Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
         }.getOrNull().orEmpty()
         if (raw.isEmpty()) return false
         return raw.split(':').any {
@@ -236,6 +295,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun toast(msg: String) =
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    private fun batteryIgnored(): Boolean {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        return runCatching { pm.isIgnoringBatteryOptimizations(packageName) }.getOrDefault(false)
+    }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }

@@ -1,5 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#12263F</color>
-    <color name="accent">#4C9AFF</color>
+    <!-- 黑 / 橙 / 金 配色 -->
+    <color name="bg">#0A0908</color>
+    <color name="surface">#141110</color>
+    <color name="card">#1C1714</color>
+    <color name="card_alt">#241C17</color>
+    <color name="primary">#FF7A18</color>
+    <color name="primary_dark">#D85F0B</color>
+    <color name="primary_container">#3A1F0B</color>
+    <color name="gold">#D9A54A</color>
+    <color name="gold_light">#F0C878</color>
+    <color name="text">#F4EDE4</color>
+    <color name="text_dim">#A2937F</color>
+    <color name="outline">#3B2E24</color>
+    <color name="on_primary">#1A0D00</color>
+    <color name="ok">#7BD88F</color>
+
+    <color name="ic_launcher_background">#0A0908</color>
 </resources>

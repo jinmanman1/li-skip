@@ -65,6 +65,8 @@ class SkipService : AccessibilityService() {
 
     private val scanRunnable = Runnable { scan() }
 
+    private val tip: SkipTip by lazy { SkipTip(this) }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -152,6 +154,8 @@ class SkipService : AccessibilityService() {
             if (!cooldownOk(r)) continue
             lastFire[r.id] = SystemClock.uptimeMillis()
             LogBus.log("命中 Activity 规则「${r.name}」→ ${r.action.name}")
+            Stats.record(this, 5000L)
+            if (Settings.toastOnSkip(this)) tip.show("已跳过开屏广告 · 省 5 秒")
             doAction(r.action, null)
             return
         }
@@ -243,8 +247,34 @@ class SkipService : AccessibilityService() {
 
     private fun fire(rule: Rule, node: AccessibilityNodeInfo, score: Int) {
         lastFire[rule.id] = SystemClock.uptimeMillis()
-        LogBus.log("执行「${rule.name}」score=$score action=${rule.action.name}")
+        val savedMs = estimateSavedMs(node)
+        Stats.record(this, savedMs)
+        LogBus.log("执行「${rule.name}」score=$score action=${rule.action.name} 省${savedMs / 1000}s")
+        if (Settings.toastOnSkip(this)) {
+            tip.show("已跳过广告 · 省 ${savedMs / 1000} 秒")
+        }
         doAction(rule.action, node)
+    }
+
+    /**
+     * 估算这一跳省了几秒：按钮上常带倒计时（「跳过 3」），能读到就直接用，
+     * 读不到按常见开屏 5 秒算。
+     */
+    private fun estimateSavedMs(node: AccessibilityNodeInfo): Long {
+        var n: AccessibilityNodeInfo? = node
+        var depth = 0
+        while (n != null && depth < 3) {
+            val digits = (n.text?.toString().orEmpty())
+                .filter { it.isDigit() }
+                .take(2)
+            if (digits.isNotEmpty()) {
+                val v = digits.toIntOrNull() ?: 0
+                if (v in 1..90) return v * 1000L
+            }
+            n = n.parent
+            depth++
+        }
+        return 5000L
     }
 
     private fun cooldownOk(rule: Rule): Boolean {

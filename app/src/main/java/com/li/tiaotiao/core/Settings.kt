@@ -21,4 +21,8 @@ object Settings {
 
     fun verbose(c: Context) = sp(c).getBoolean("verbose", false)
     fun setVerbose(c: Context, v: Boolean) = sp(c).edit().putBoolean("verbose", v).apply()
+
+    /** 跳过成功时显示悬浮提示 */
+    fun toastOnSkip(c: Context) = sp(c).getBoolean("toast_skip", true)
+    fun setToastOnSkip(c: Context, v: Boolean) = sp(c).edit().putBoolean("toast_skip", v).apply()
 }
