@@ -25,4 +25,8 @@ object Settings {
     /** 跳过成功时显示悬浮提示 */
     fun toastOnSkip(c: Context) = sp(c).getBoolean("toast_skip", true)
     fun setToastOnSkip(c: Context, v: Boolean) = sp(c).edit().putBoolean("toast_skip", v).apply()
+
+    /** 调试浮层：屏幕上实时显示扫描状态 */
+    fun hud(c: Context) = sp(c).getBoolean("hud", false)
+    fun setHud(c: Context, v: Boolean) = sp(c).edit().putBoolean("hud", v).apply()
 }

@@ -11,7 +11,7 @@ object RuleStore {
     private const val PREF = "li_skip"
     private const val KEY_RULES = "rules_json"
     private const val KEY_SEEDED = "seeded_v2"
-    private const val KEY_MIGRATED = "migrated_v2"
+    private const val KEY_MIGRATED = "migrated_v3"
 
     private lateinit var app: Context
 
@@ -157,33 +157,33 @@ object RuleStore {
         Rule(
             name = "通用 · 跳过文字",
             keywords = mutableListOf("跳过", "跳过广告", "跳过此广告", "skip", "Skip", "SKIP"),
-            region = Region(0.35f, 0f, 1f, 0.40f),
-            maxWidthFrac = 0.5f,
-            maxHeightFrac = 0.18f,
+            region = Region(0.25f, 0f, 1f, 0.55f),
+            maxWidthFrac = 0.62f,
+            maxHeightFrac = 0.22f,
             mustClickable = false,
-            minScore = 70,
+            minScore = 65,
             cooldownMs = 1200,
             note = "最常见的开屏广告按钮"
         ),
         Rule(
             name = "通用 · 关闭文字",
             keywords = mutableListOf("关闭广告", "关闭", "close", "×", "✕"),
-            region = Region(0.45f, 0f, 1f, 0.60f),
-            maxWidthFrac = 0.35f,
-            maxHeightFrac = 0.14f,
+            region = Region(0.30f, 0f, 1f, 0.75f),
+            maxWidthFrac = 0.5f,
+            maxHeightFrac = 0.2f,
             mustClickable = false,
-            minScore = 78,
+            minScore = 72,
             cooldownMs = 1500,
             note = "插屏/弹窗广告的关闭按钮"
         ),
         Rule(
             name = "通用 · 倒计时跳过",
             textRegex = "(跳过|Skip|SKIP)\\s*\\d{0,2}\\s*(s|S|秒)?|^\\s*\\d{1,2}\\s*(s|秒)\\s*$",
-            region = Region(0.30f, 0f, 1f, 0.35f),
-            maxWidthFrac = 0.45f,
-            maxHeightFrac = 0.14f,
+            region = Region(0.18f, 0f, 1f, 0.5f),
+            maxWidthFrac = 0.6f,
+            maxHeightFrac = 0.2f,
             mustClickable = false,
-            minScore = 72,
+            minScore = 68,
             note = "「跳过 3」「3s」这类倒计时样式"
         ),
         Rule(

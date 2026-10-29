@@ -57,6 +57,13 @@ class SkipService : AccessibilityService() {
     private val pendingAt = HashMap<String, Long>()
     private val fastTapAt = HashMap<String, Long>()
     private var lastFastGlobal = 0L
+    private var scanCount = 0
+    private var hitCount = 0
+    private var scanPkgName = ""
+    private var scanNodeCount = 0
+    private var lastNoRootLog = 0L
+    private var hud: SkipHud? = null
+    private var hudAt = 0L
     private val realAppCache = HashMap<String, Boolean>()
     private var lastVerboseAt = 0L
 
@@ -71,6 +78,21 @@ class SkipService : AccessibilityService() {
         return ok
     }
 
+    /** systemui 这类窗口永远不扫 */
+    private fun isSystemPkg(p: String): Boolean =
+        p == "com.android.systemui" || p == "com.miui.personalassistant"
+
+    /**
+     * 可扫描判断：优先用「有没有桌面图标」，
+     * 但如果机型上 queryIntentActivities 被限制（返回空），
+     * 只要它是个应用窗口就照扫 —— 否则会变成「什么都不扫」。
+     */
+    private fun isScannable(p: String, isAppWindow: Boolean): Boolean {
+        if (p.isEmpty() || p == packageName) return false
+        if (isSystemPkg(p)) return false
+        return isRealApp(p) || isAppWindow
+    }
+
     private data class Root(val node: AccessibilityNodeInfo, val pkg: String)
 
     /**
@@ -78,31 +100,39 @@ class SkipService : AccessibilityService() {
      * 不能只用 rootInActiveWindow：MIUI 上它经常指向 systemui，
      * 导致我们对着状态栏匹配，广告一个节点都看不到。
      */
-    private fun pickRoot(): Root? {
+    /**
+     * 收集所有「真应用」窗口，按优先级排序。
+     * 不再只挑一个：广告可能是独立窗口，一次扫全部更稳。
+     * 优先级：活跃的应用窗口 > 其他应用窗口。
+     */
+    private fun pickRoots(): List<Root> {
+        val out = ArrayList<Root>(4)
         val wins = runCatching { windows }.getOrNull().orEmpty()
 
-        val apps = ArrayList<Pair<AccessibilityWindowInfo, Root>>()
         for (w in wins) {
+            if (out.size >= 3) break
             val r = runCatching { w.root }.getOrNull() ?: continue
             val p = runCatching { r.packageName?.toString() }.getOrNull().orEmpty()
             if (p.isEmpty() || p == packageName) continue
-            if (!isRealApp(p)) continue
-            apps.add(w to Root(r, p))
-        }
-        if (apps.isEmpty()) {
-            // 某些机型 getWindows() 拿不到列表，退回到 rootInActiveWindow
-            val r = runCatching { rootInActiveWindow }.getOrNull() ?: return null
-            val p = runCatching { r.packageName?.toString() }.getOrNull().orEmpty()
-            if (p.isNotEmpty() && p != packageName) return Root(r, p)
-            return null
+            val isAppWindow = runCatching {
+                w.type == AccessibilityWindowInfo.TYPE_APPLICATION
+            }.getOrDefault(false)
+            if (!isScannable(p, isAppWindow)) continue
+            if (out.any { it.pkg == p }) continue
+            val isActive = runCatching { w.isActive }.getOrDefault(false)
+            val root = Root(r, p)
+            if (isActive && isAppWindow) out.add(0, root) else out.add(root)
         }
 
-        // 优先级：活跃的应用窗口 > 任意应用窗口 > 任意窗口
-        apps.firstOrNull { it.first.isActive && it.first.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-            ?.let { return it.second }
-        apps.firstOrNull { it.first.type == AccessibilityWindowInfo.TYPE_APPLICATION }
-            ?.let { return it.second }
-        return apps.first().second
+        if (out.isEmpty()) {
+            // 某些机型 getWindows() 拿不到列表，退回到 rootInActiveWindow
+            val r = runCatching { rootInActiveWindow }.getOrNull()
+            if (r != null) {
+                val p = runCatching { r.packageName?.toString() }.getOrNull().orEmpty()
+                if (isScannable(p, false)) out.add(Root(r, p))
+            }
+        }
+        return out
     }
 
     private data class TreeSnap(val where: String, val time: Long, val lines: List<String>)
@@ -232,8 +262,7 @@ class SkipService : AccessibilityService() {
         }
         // MIUI 上 systemui / 任务管理器会频繁抢「前台」，
         // 把 pkg 变成它们之后，扫描就全对着状态栏做了，广告永远匹配不到。
-        // 只认「装了桌面图标的应用」。
-        if (!isRealApp(p)) return
+        if (isSystemPkg(p)) return
 
         if (p != pkg) {
             pkg = p
@@ -333,75 +362,123 @@ class SkipService : AccessibilityService() {
         if (!runCatching { power.isInteractive }.getOrDefault(true)) return
         if (rules.isEmpty()) reloadRules()
 
-        // 不用 rootInActiveWindow：MIUI 上它经常指向 systemui
-        val picked = pickRoot() ?: return
-        val root = picked.node
-        val scanPkg = picked.pkg
-        if (scanPkg == packageName) return
+        val roots = pickRoots()
+        scanCount++
+
+        if (roots.isEmpty()) {
+            val now = SystemClock.uptimeMillis()
+            if (now - lastNoRootLog > 3000) {
+                lastNoRootLog = now
+                scanPkgName = ""
+                scanNodeCount = 0
+                val winCount = runCatching { windows?.size }.getOrNull() ?: -1
+                val activePkg = runCatching {
+                    rootInActiveWindow?.packageName?.toString()
+                }.getOrNull()
+                LogBus.log("扫不到应用窗口 windows=$winCount 活动窗口=$activePkg")
+                hudRefresh()
+            }
+            return
+        }
 
         lastScanAt = SystemClock.uptimeMillis()
         val (sw, sh) = screenSize()
         val splash = lastScanAt - launchAt <= Settings.splashWindow(this)
-        val ctx = MatchEngine.Ctx(sw, sh, splash, scanPkg, activityName)
-
-        val nodes = ArrayList<AccessibilityNodeInfo>(256)
-        collect(root, nodes)
-        if (nodes.isEmpty()) return
-
-        val snaps = ArrayList<MatchEngine.Snap>(nodes.size)
-        for (n in nodes) snaps.add(MatchEngine.Snap(n))
-        recordTree(snaps, scanPkg)
-
-        // 上一轮留下的待确认候选：确认没动就点，没找到就继续正常扫描（不再直接 return）
-        val pd = pending
-        if (pd != null) {
-            pending = null
-            val idx = findSameIndex(snaps, pd)
-            val r = rules.firstOrNull { it.id == pd.ruleId }
-            if (idx >= 0 && r != null && r.enabled) {
-                LogBus.log("确认 → 「${r.name}」(${pd.score})")
-                fire(r, snaps[idx].node, pd.score)
-                return
-            }
-        }
-
         val verbose = Settings.verbose(this)
         val misses = ArrayList<String>()
         var best: Cand? = null
+        var totalNodes = 0
+        var lastPkgName = ""
 
-        for (r in rules) {
-            if (!r.enabled || r.activityOnly) continue
-            if (!r.appliesTo(scanPkg)) continue
-            if (r.onlySplash && !splash) continue
-            if (!cooldownOk(r)) continue
-            for (s in snaps) {
-                val e = MatchEngine.evaluate(s, r, ctx)
-                val cur = best
-                if (e.score > 0 && e.score >= r.minScore) {
-                    if (cur == null || e.score > cur.score) best = Cand(s.node, r, e.score)
-                } else if (verbose && misses.size < 6) {
-                    if (e.score > 0) {
-                        misses.add("${r.name}=${e.score}分")
-                    } else if (e.reason.isNotEmpty()) {
-                        misses.add("${r.name}:${e.reason}")
+        for (rootInfo in roots) {
+            val ctx = MatchEngine.Ctx(sw, sh, splash, rootInfo.pkg, activityName)
+            val nodes = ArrayList<AccessibilityNodeInfo>(192)
+            collect(rootInfo.node, nodes)
+            if (nodes.isEmpty()) continue
+            totalNodes += nodes.size
+            lastPkgName = rootInfo.pkg
+
+            val snaps = ArrayList<MatchEngine.Snap>(nodes.size)
+            for (n in nodes) snaps.add(MatchEngine.Snap(n))
+            recordTree(snaps, rootInfo.pkg)
+
+            // 上一轮留下的待确认候选：确认没动就点
+            val pd = pending
+            if (pd != null) {
+                pending = null
+                val idx = findSameIndex(snaps, pd)
+                val r = rules.firstOrNull { it.id == pd.ruleId }
+                if (idx >= 0 && r != null && r.enabled) {
+                    LogBus.log("确认 → 「${r.name}」(${pd.score})")
+                    fire(r, snaps[idx].node, pd.score)
+                    return
+                }
+            }
+
+            for (r in rules) {
+                if (!r.enabled || r.activityOnly) continue
+                if (!r.appliesTo(rootInfo.pkg)) continue
+                if (r.onlySplash && !splash) continue
+                if (!cooldownOk(r)) continue
+                for (s in snaps) {
+                    val e = MatchEngine.evaluate(s, r, ctx)
+                    val cur = best
+                    if (e.score > 0 && e.score >= r.minScore) {
+                        if (cur == null || e.score > cur.score) best = Cand(s.node, r, e.score)
+                    } else if (verbose && misses.size < 6) {
+                        if (e.score > 0) {
+                            misses.add("${r.name}=${e.score}分")
+                        } else if (e.reason.isNotEmpty()) {
+                            misses.add("${r.name}:${e.reason}")
+                        }
                     }
                 }
             }
         }
 
-        val b = best
-        if (verbose && lastScanAt - lastVerboseAt > 1500) {
-            lastVerboseAt = lastScanAt
-            LogBus.log(
-                "扫描 " + scanPkg.substringAfterLast('.') + " 节点" + snaps.size +
-                    (if (b == null) " 无命中" else " 命中「" + b.rule.name + "」" + b.score) +
-                    (if (misses.isEmpty()) "" else " | " + misses.distinct().take(3).joinToString("，"))
-            )
-        }
-        if (b == null) return
+        scanPkgName = lastPkgName.substringAfterLast('.')
+        scanNodeCount = totalNodes
+        hudRefresh()
 
+        val b = best
+        if (b == null) {
+            if (verbose && lastScanAt - lastVerboseAt > 1500) {
+                lastVerboseAt = lastScanAt
+                LogBus.log(
+                    "扫描 $scanPkgName 节点$totalNodes 无命中" +
+                        (if (misses.isEmpty()) "" else " | " + misses.distinct().take(3).joinToString("，"))
+                )
+            }
+            return
+        }
+
+        hitCount++
         LogBus.log("候选「${b.rule.name}」${b.score}分")
         startConfirmOrFire(b)
+    }
+
+    /** 主界面/调试浮层用的实时状态 */
+    data class Status(val scans: Int, val hits: Int, val pkg: String, val nodes: Int, val at: Long)
+
+    fun status() = Status(scanCount, hitCount, scanPkgName, scanNodeCount, lastScanAt)
+
+    /** 调试浮层：让你在广告页上就能看到「扫没扫、扫到几个节点」 */
+    private fun hudRefresh() {
+        if (!Settings.hud(this)) {
+            hud?.hide()
+            return
+        }
+        val now = SystemClock.uptimeMillis()
+        if (now - hudAt < 300) return
+        hudAt = now
+        val h = hud ?: SkipHud(this).also { hud = it }
+        val pkgShort = scanPkgName.ifEmpty { "-" }
+        h.show("扫${scanCount}次 $pkgShort 节点$scanNodeCount 候选$hitCount")
+    }
+
+    fun refreshHud() {
+        hudAt = 0L
+        hudRefresh()
     }
 
     private fun startConfirmOrFire(c: Cand) {

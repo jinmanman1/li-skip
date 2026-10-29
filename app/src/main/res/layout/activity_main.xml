@@ -113,6 +113,15 @@
                     android:textColor="@color/text"
                     android:textSize="13sp" />
 
+                <TextView
+                    android:id="@+id/diagText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text=""
+                    android:textColor="@color/text_dim"
+                    android:textSize="11sp" />
+
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnResetStats"
                     style="@style/Widget.Material3.Button.TextButton"
@@ -181,6 +190,26 @@
 
             <com.google.android.material.materialswitch.MaterialSwitch
                 android:id="@+id/swVerbose"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="调试浮层（屏幕上显示扫描状态）"
+                android:textColor="@color/text"
+                android:textSize="15sp" />
+
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/swHud"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content" />
         </LinearLayout>

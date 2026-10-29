@@ -111,6 +111,14 @@ class MainActivity : AppCompatActivity() {
         swVerbose.isChecked = AppSettings.verbose(this)
         swVerbose.setOnCheckedChangeListener { _, v -> AppSettings.setVerbose(this, v) }
 
+        val swHud = findViewById<MaterialSwitch>(R.id.swHud)
+        swHud.isChecked = AppSettings.hud(this)
+        swHud.setOnCheckedChangeListener { _, v ->
+            AppSettings.setHud(this, v)
+            SkipService.instance?.refreshHud()
+            toast(if (v) "已开启调试浮层" else "已关闭调试浮层")
+        }
+
         findViewById<MaterialButton>(R.id.btnPick).setOnClickListener {
             val svc = SkipService.instance
             if (svc == null) {
@@ -225,6 +233,17 @@ class MainActivity : AppCompatActivity() {
     private fun refreshStats() {
         statsSaved.text = Stats.human(Stats.totalMs(this))
         statsDetail.text = "共跳过 ${Stats.count(this)} 次 · 今日 ${Stats.todayCount(this)} 次"
+
+        val svc = SkipService.instance
+        val diag = findViewById<TextView>(R.id.diagText)
+        if (svc == null) {
+            diag.text = "无障碍服务未连接"
+        } else {
+            val s = svc.status()
+            val ago = if (s.at == 0L) "还没扫描过"
+            else "${(android.os.SystemClock.uptimeMillis() - s.at) / 1000} 秒前"
+            diag.text = "已扫描 ${s.scans} 次 · 命中 ${s.hits} 次 · 最近 ${s.pkg.ifEmpty { "-" }} ${s.nodes} 节点（$ago）"
+        }
     }
 
     private fun refreshRules() {
